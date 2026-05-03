@@ -1,9 +1,8 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
-pipelines/per_species/inference.py
+ps_inference.py
 
 Derived from:
 - 04_single_frame_segmentation_ps.ipynb
@@ -12,28 +11,31 @@ Derived from:
 Purpose:
 - Load a trained per-species Mask R-CNN checkpoint
 - Run single-frame or multi-frame inference
-- Save raw and cleaned prediction images
+- Save raw prediction images, cleaned prediction images, and regionprops tables
 - Optionally export cleaned predictions to COCO JSON
 
-CLI arguments:
-- --species
-- --image-size
-- --dataset-root
-- --gpu-id
-- --checkpoint-file
-- --mode                  ("single" or "multi")
-- --input-image
-- --test-index
-- --output-root
-- --score-threshold
-- --mask-threshold
-- --export-coco
+Expected input structure for single-frame inference:
+    dataset/{species}/png_256_thin/image/test/
+    dataset/{species}/png_512_thin/image/test/
+
+Example:
+    python ps_inference.py \
+        --dataset-root /path/to/dataset \
+        --species acapod \
+        --image-size 256 \
+        --checkpoint-file ./model/256_thin_acapod_700_epoch.tar \
+        --mode single \
+        --test-index 0 \
+        --output-root ./inference_results_per_species
 
 Notes:
-- This script preserves notebook behavior as closely as practical.
-- Single-frame mode is mainly for inspection.
-- Multi-frame mode is the main full-image prediction path.
-- COCO export requires src.create_annotations to be available.
+- For multi-frame inference, specifying --input-image is recommended.
+- Gray value mapping follows the notebook/preprocess convention:
+    vessel      -> 255
+    ray         -> 191
+    fiber       -> 127
+    parenchyma  -> 63
+    background  -> 0
 """
 
 from __future__ import annotations
@@ -65,45 +67,83 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 # ---------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser()
 
-    p.add_argument("--species", type=str, default="acapod")
-    p.add_argument("--image-size", type=int, default=256, choices=[256, 512])
-    p.add_argument("--dataset-root", type=str, default="dataset")
-    p.add_argument("--gpu-id", type=int, default=0)
+    parser.add_argument(
+        "--dataset-root",
+        type=str,
+        default="dataset",
+        help="Dataset root. Default: dataset",
+    )
 
-    p.add_argument(
+    parser.add_argument(
+        "--species",
+        type=str,
+        required=True,
+        help="Species name, e.g. acapod, alllit, burspi, euclon, exostr, hakdac.",
+    )
+
+    parser.add_argument(
+        "--image-size",
+        type=int,
+        default=256,
+        choices=[256, 512],
+        help="Patch size used for inference. Default: 256",
+    )
+
+    parser.add_argument("--gpu-id", type=int, default=0)
+
+    parser.add_argument(
         "--checkpoint-file",
         type=str,
         required=True,
-        help="Path to trained checkpoint tar file.",
+        help="Path to trained per-species checkpoint file.",
     )
 
-    p.add_argument("--mode", type=str, default="single", choices=["single", "multi"])
-    p.add_argument(
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="single",
+        choices=["single", "multi"],
+        help="Inference mode: single or multi.",
+    )
+
+    parser.add_argument(
         "--input-image",
         type=str,
         default=None,
-        help="Optional explicit input image path. If omitted, script uses notebook-style defaults.",
+        help=(
+            "Optional explicit input image path. "
+            "Recommended for multi-frame inference."
+        ),
     )
-    p.add_argument(
+
+    parser.add_argument(
         "--test-index",
         type=int,
-        default=1,
-        help="Index of test image for single mode if --input-image is not specified.",
+        default=0,
+        help=(
+            "Index of test image for single mode if --input-image is not specified."
+        ),
     )
 
-    p.add_argument(
+    parser.add_argument(
         "--output-root",
         type=str,
-        default="./inference_results_without_clearborder",
+        default="./inference_results_per_species",
+        help="Output directory root.",
     )
 
-    p.add_argument("--score-threshold", type=float, default=0.7)
-    p.add_argument("--mask-threshold", type=float, default=0.7)
-    p.add_argument("--export-coco", action="store_true")
+    parser.add_argument("--score-threshold", type=float, default=0.7)
+    parser.add_argument("--mask-threshold", type=float, default=0.7)
 
-    return p.parse_args()
+    parser.add_argument(
+        "--export-coco",
+        action="store_true",
+        help="Export cleaned prediction as COCO JSON.",
+    )
+
+    return parser.parse_args()
 
 
 # ---------------------------
@@ -115,21 +155,29 @@ def get_model(device: torch.device):
         weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT,
         box_detections_per_img=200,
     )
+
     in_features = model.roi_heads.box_predictor.cls_score.in_features
+
     model.roi_heads.box_predictor = FastRCNNPredictor(
-        in_features, num_classes=1 + 4
+        in_features,
+        num_classes=1 + 4,
     )
+
     model.to(device)
+
     return model
 
 
 def load_checkpoint(checkpoint, model, optimizer, lr: float) -> None:
     print("=> Loading checkpoint")
-    model.load_state_dict(checkpoint["state_dict"])
-    optimizer.load_state_dict(checkpoint["optimizer"])
 
-    for param_group in optimizer.param_groups:
-        param_group["lr"] = lr
+    model.load_state_dict(checkpoint["state_dict"])
+
+    if "optimizer" in checkpoint and optimizer is not None:
+        optimizer.load_state_dict(checkpoint["optimizer"])
+
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = lr
 
 
 # ---------------------------
@@ -145,21 +193,28 @@ def predict_patch(
     device: torch.device | str = "cuda",
 ) -> np.ndarray:
     """
-    Equivalent to notebook predict_multi_frame() behavior:
-    - resize patch/frame to image_size
-    - run model
-    - convert labels to gray values
-    - expand labels slightly
+    Run Mask R-CNN prediction on one image patch/frame.
+
+    Label-to-gray mapping follows notebook/preprocess convention:
+        1 -> 255  vessel
+        2 -> 191  ray
+        3 -> 127  fiber
+        4 -> 63   parenchyma
     """
-    images = cv2.resize(frame, image_size, cv2.INTER_LINEAR) / 255.0
-    images = torch.as_tensor(images, dtype=torch.float32).unsqueeze(0)  # [1, H, W, C]
-    images = images.permute(0, 3, 1, 2)  # [1, C, H, W]
-    images = [image.to(device) for image in images]
+    image = cv2.resize(frame, image_size, cv2.INTER_LINEAR) / 255.0
+    image = torch.as_tensor(image, dtype=torch.float32).unsqueeze(0)
+    image = image.permute(0, 3, 1, 2)
+    images = [image[0].to(device)]
 
     with torch.no_grad():
         pred = model(images)
 
-    label_to_gray = {1: 64, 2: 128, 3: 192, 4: 255}
+    label_to_gray = {
+        1: 255,
+        2: 191,
+        3: 127,
+        4: 63,
+    }
 
     height, width = images[0].shape[1:]
     im_label = np.zeros((height, width), dtype=np.uint8)
@@ -171,11 +226,11 @@ def predict_patch(
 
         if score_val > score_threshold and label_val in label_to_gray:
             if mask_tensor.ndim == 3:
-                msk = mask_tensor[0].detach().cpu().numpy()
+                mask = mask_tensor[0].detach().cpu().numpy()
             else:
-                msk = mask_tensor.detach().cpu().numpy()
+                mask = mask_tensor.detach().cpu().numpy()
 
-            im_label[msk > mask_threshold] = label_val
+            im_label[mask > mask_threshold] = label_val
 
     im_label_expanded = expand_labels(im_label, distance=1)
 
@@ -186,7 +241,7 @@ def predict_patch(
 
 
 # ---------------------------
-# Paths / defaults
+# Default paths
 # ---------------------------
 
 def default_test_dir(dataset_root: str, species: str, image_size: int) -> str:
@@ -194,16 +249,36 @@ def default_test_dir(dataset_root: str, species: str, image_size: int) -> str:
 
 
 def default_performance_check_image(dataset_root: str, species: str) -> str:
-    sp_to_filename = {
-        "acapod": "acapod2_01_img.png",
-        "alllit": "alllit2_01_img.png",
-        "burspi": "burspi1_01_img.png",
-        "euclon": "euclon1_01_img.png",
-        "exostr": "exostr8_01_img.png",
-        "hakdac": "hakdac2_01_img.png",
-    }
-    filename = sp_to_filename[species]
-    return os.path.join(dataset_root, "performance_check", "image", filename)
+    """
+    Fallback search for a full-size image used in multi-frame inference.
+
+    Priority:
+    1. dataset/{species}/performance_check/image/*.png
+    2. dataset/performance_check/image/{species}*.png
+    3. dataset/performance_check/image/*.png
+
+    For reproducibility, passing --input-image explicitly is recommended.
+    """
+    species_specific_dir = Path(dataset_root) / species / "performance_check" / "image"
+    if species_specific_dir.exists():
+        candidates = sorted(species_specific_dir.glob("*.png"))
+        if candidates:
+            return str(candidates[0])
+
+    common_dir = Path(dataset_root) / "performance_check" / "image"
+    if common_dir.exists():
+        species_candidates = sorted(common_dir.glob(f"{species}*.png"))
+        if species_candidates:
+            return str(species_candidates[0])
+
+        candidates = sorted(common_dir.glob("*.png"))
+        if candidates:
+            return str(candidates[0])
+
+    raise FileNotFoundError(
+        "No default performance-check image found. "
+        "For multi-frame inference, specify --input-image explicitly."
+    )
 
 
 # ---------------------------
@@ -219,6 +294,7 @@ def run_single_frame(
     mask_threshold: float,
 ) -> np.ndarray:
     img = cv2.imread(image_path)
+
     if img is None:
         raise FileNotFoundError(f"Could not read image: {image_path}")
 
@@ -230,6 +306,7 @@ def run_single_frame(
         mask_threshold=mask_threshold,
         device=device,
     )
+
     return pred
 
 
@@ -239,21 +316,30 @@ def run_single_frame(
 
 def get_tiling_params(image_size: int):
     """
-    Notebook logic:
-    - 512 -> pad=64, sz=384, range(4)
-    - 256 -> pad=32, sz=192, range(8)
+    Notebook-style tiling parameters.
+
+    For 512:
+        pad = 64
+        inner tile size = 384
+        4 x 4 tiles
+
+    For 256:
+        pad = 32
+        inner tile size = 192
+        8 x 8 tiles
     """
     if image_size == 512:
         pad = 64
         sz = 384
-        l = list(range(4))
+        tile_range = list(range(4))
     elif image_size == 256:
         pad = 32
         sz = 192
-        l = list(range(8))
+        tile_range = list(range(8))
     else:
         raise ValueError(f"Unsupported image_size: {image_size}")
-    return pad, sz, l
+
+    return pad, sz, tile_range
 
 
 def run_multi_frame(
@@ -264,26 +350,34 @@ def run_multi_frame(
     score_threshold: float,
     mask_threshold: float,
 ) -> np.ndarray:
-    pad, sz, l = get_tiling_params(image_size)
+    pad, sz, tile_range = get_tiling_params(image_size)
 
     img_in = cv2.imread(image_path)
+
     if img_in is None:
         raise FileNotFoundError(f"Could not read image: {image_path}")
 
     img_padded = cv2.copyMakeBorder(
-        img_in, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=(0, 0, 0)
+        img_in,
+        pad,
+        pad,
+        pad,
+        pad,
+        cv2.BORDER_CONSTANT,
+        value=(0, 0, 0),
     )
 
     img_pred = np.zeros_like(img_in[:, :, 0], dtype=np.uint8)
 
     start = time.time()
 
-    for i, j in itertools.product(l, l):
+    for i, j in itertools.product(tile_range, tile_range):
         img_patch = img_padded[
             sz * i : sz * i + image_size,
             sz * j : sz * j + image_size,
             :
         ]
+
         res = predict_patch(
             model=model,
             frame=img_patch,
@@ -292,10 +386,12 @@ def run_multi_frame(
             mask_threshold=mask_threshold,
             device=device,
         )
+
         res = res[pad : pad + sz, pad : pad + sz]
         img_pred[sz * i : sz * i + sz, sz * j : sz * j + sz] = res
 
     end = time.time()
+
     print(f"GPU time = {end - start:.3f} sec")
 
     return img_pred
@@ -307,11 +403,10 @@ def run_multi_frame(
 
 def clean_prediction(img_pred: np.ndarray) -> tuple[np.ndarray, pd.DataFrame]:
     """
-    Notebook logic:
-    - label connected components
-    - expand labels
-    - assign dominant gray level per connected component
-    - reconstruct cleaned annotation image
+    Clean prediction by connected-component labelling.
+
+    The dominant gray value in each connected component is assigned back to
+    the whole component.
     """
     new_labels = label(img_pred > 0)
 
@@ -327,44 +422,62 @@ def clean_prediction(img_pred: np.ndarray) -> tuple[np.ndarray, pd.DataFrame]:
             "area",
         ),
     )
+
     df = pd.DataFrame(props)
+
+    valid_gray_values = [255, 191, 127, 63]
 
     def get_gray(region_label):
         output = img_pred[new_labels == region_label]
-        out = output[np.isin(output, [64, 128, 192, 255])]
+        out = output[np.isin(output, valid_gray_values)]
+
         if len(out) == 0:
             return 0
-        gl = np.argmax(np.bincount(out))
-        return gl
+
+        gray_value = np.argmax(np.bincount(out))
+        return gray_value
 
     label_list = np.unique(new_labels)[1:]
-    lbl_gray = [get_gray(x) for x in label_list]
-    df["gray"] = lbl_gray
+    label_gray = [get_gray(x) for x in label_list]
+
+    df["gray"] = label_gray
 
     new_labels_copy = copy.deepcopy(new_labels).flatten()
     new_annotation = np.zeros((len(new_labels_copy)), dtype=np.uint8)
 
     replace_func = {
         label_id: gray_val
-        for gray_val, label_id in zip(list(df["gray"].values), list(df["label"].values))
+        for gray_val, label_id in zip(
+            list(df["gray"].values),
+            list(df["label"].values),
+        )
     }
 
-    replace_result = np.asarray(list(map(replace_func.get, new_labels_copy.flatten())))
+    replace_result = np.asarray(
+        list(map(replace_func.get, new_labels_copy.flatten()))
+    )
+
     result_index = np.where(replace_result != None)[0]
     new_annotation[result_index] = replace_result[result_index].astype(np.uint8)
 
-    newly_annotated_img = new_annotation.reshape((new_labels.shape))
+    cleaned_img = new_annotation.reshape((new_labels.shape))
 
-    return newly_annotated_img, df
+    return cleaned_img, df
 
 
 # ---------------------------
 # Optional COCO export
 # ---------------------------
 
-def export_coco_if_requested(cleaned_img: np.ndarray, data_img: str, out_json: str) -> None:
+def export_coco_if_requested(
+    cleaned_img: np.ndarray,
+    data_img: str,
+    out_json: str,
+) -> None:
     """
-    Uses src.create_annotations if available.
+    Export cleaned prediction to COCO JSON.
+
+    Requires src.create_annotations.
     """
     try:
         from src.create_annotations import (
@@ -373,11 +486,11 @@ def export_coco_if_requested(cleaned_img: np.ndarray, data_img: str, out_json: s
             create_category_annotation,
             singleshot_annotations_info,
         )
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "src.create_annotations could not be imported. "
             "COCO export requires that module to be available."
-        )
+        ) from e
 
     category_ids = {
         "stuff": 0,
@@ -388,11 +501,11 @@ def export_coco_if_requested(cleaned_img: np.ndarray, data_img: str, out_json: s
     }
 
     category_colors = {
+        "(255, 255, 255)": 1,
+        "(191, 191, 191)": 2,
+        "(127, 127, 127)": 3,
+        "(63, 63, 63)": 4,
         "(0, 0, 0)": 0,
-        "(64, 64, 64)": 1,
-        "(128, 128, 128)": 2,
-        "(192, 192, 192)": 3,
-        "(255, 255, 255)": 4,
     }
 
     multipolygon_ids = []
@@ -401,11 +514,20 @@ def export_coco_if_requested(cleaned_img: np.ndarray, data_img: str, out_json: s
     coco_format["info"] = info()
     coco_format["categories"] = create_category_annotation(category_ids)
 
-    coco_format["images"], coco_format["annotations"], annotation_cnt = singleshot_annotations_info(
-        cleaned_img, data_img, category_ids, category_colors, multipolygon_ids
+    (
+        coco_format["images"],
+        coco_format["annotations"],
+        annotation_cnt,
+    ) = singleshot_annotations_info(
+        cleaned_img,
+        data_img,
+        category_ids,
+        category_colors,
+        multipolygon_ids,
     )
 
     os.makedirs(os.path.dirname(out_json), exist_ok=True)
+
     with open(out_json, "w") as outfile:
         json.dump(coco_format, outfile)
 
@@ -427,6 +549,7 @@ def main():
     weight_decay = 5e-4
 
     model = get_model(device=device)
+
     optimizer = torch.optim.AdamW(
         params=model.parameters(),
         lr=learning_rate,
@@ -434,7 +557,13 @@ def main():
     )
 
     checkpoint = torch.load(args.checkpoint_file, map_location=device)
-    load_checkpoint(checkpoint, model, optimizer, learning_rate)
+    load_checkpoint(
+        checkpoint=checkpoint,
+        model=model,
+        optimizer=optimizer,
+        lr=learning_rate,
+    )
+
     model.eval()
     model.train(False)
 
@@ -442,10 +571,19 @@ def main():
         if args.input_image is not None:
             image_path = args.input_image
         else:
-            test_dir = default_test_dir(args.dataset_root, args.species, args.image_size)
-            test_files = sorted([f for f in os.listdir(test_dir) if f.endswith(".png")])
+            test_dir = default_test_dir(
+                dataset_root=args.dataset_root,
+                species=args.species,
+                image_size=args.image_size,
+            )
+
+            test_files = sorted(
+                [f for f in os.listdir(test_dir) if f.endswith(".png")]
+            )
+
             if len(test_files) == 0:
                 raise RuntimeError(f"No png files found in {test_dir}")
+
             image_path = os.path.join(test_dir, test_files[args.test_index])
 
         pred_raw = run_single_frame(
@@ -457,11 +595,14 @@ def main():
             mask_threshold=args.mask_threshold,
         )
 
-    else:  # multi
+    else:
         if args.input_image is not None:
             image_path = args.input_image
         else:
-            image_path = default_performance_check_image(args.dataset_root, args.species)
+            image_path = default_performance_check_image(
+                dataset_root=args.dataset_root,
+                species=args.species,
+            )
 
         pred_raw = run_multi_frame(
             model=model,
@@ -469,39 +610,64 @@ def main():
             image_size=args.image_size,
             device=device,
             score_threshold=args.score_threshold,
-            mask_threshold=max(args.mask_threshold, 0.9),  # preserves notebook tendency in multi-frame
+            mask_threshold=max(args.mask_threshold, 0.9),
         )
 
-    # output structure
     ckpt_stem = Path(args.checkpoint_file).stem
+
     sub_dir = os.path.join(
         args.output_root,
         f"{args.image_size}_per_species_{args.species}_{ckpt_stem}",
     )
+
     os.makedirs(sub_dir, exist_ok=True)
     os.makedirs(os.path.join(sub_dir, "prediction_raw"), exist_ok=True)
     os.makedirs(os.path.join(sub_dir, "prediction_cleaned"), exist_ok=True)
 
-    fnam = Path(image_path).stem
+    image_id = Path(image_path).stem
 
-    raw_path = os.path.join(sub_dir, "prediction_raw", f"{fnam}_prediction_raw.png")
+    raw_path = os.path.join(
+        sub_dir,
+        "prediction_raw",
+        f"{image_id}_prediction_raw.png",
+    )
+
     Image.fromarray(pred_raw.astype(np.uint8)).save(raw_path)
     print(f"Saved raw prediction to: {raw_path}")
 
     cleaned_img, df = clean_prediction(pred_raw)
 
-    cleaned_path = os.path.join(sub_dir, "prediction_cleaned", f"{fnam}_pred_cleaned.png")
+    cleaned_path = os.path.join(
+        sub_dir,
+        "prediction_cleaned",
+        f"{image_id}_pred_cleaned.png",
+    )
+
     Image.fromarray(cleaned_img.astype(np.uint8)).save(cleaned_path)
     print(f"Saved cleaned prediction to: {cleaned_path}")
 
-    props_csv = os.path.join(sub_dir, f"{fnam}_regionprops.csv")
+    props_csv = os.path.join(
+        sub_dir,
+        f"{image_id}_regionprops.csv",
+    )
+
     df.to_csv(props_csv, index=False)
     print(f"Saved regionprops table to: {props_csv}")
 
     if args.export_coco:
-        out_json = os.path.join(sub_dir, "prediction_cleaned_json", f"{fnam}_annot_coco.json")
-        export_coco_if_requested(cleaned_img, image_path, out_json)
+        out_json = os.path.join(
+            sub_dir,
+            "prediction_cleaned_json",
+            f"{image_id}_annot_coco.json",
+        )
+
+        export_coco_if_requested(
+            cleaned_img=cleaned_img,
+            data_img=image_path,
+            out_json=out_json,
+        )
 
 
 if __name__ == "__main__":
     main()
+
