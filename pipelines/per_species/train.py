@@ -1,9 +1,8 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
-pipelines/per_species/train.py
+ps_train.py
 
 Derived from:
 - 03_cell_instance_recognition_ps.ipynb
@@ -12,23 +11,33 @@ Purpose:
 - Train a per-species Mask R-CNN model using COCO-formatted annotations
 - Save the best checkpoint based on validation loss
 
-CLI arguments:
-- --species
-- --image-size
-- --dataset-root
-- --gpu-id
-- --batch-size
-- --epochs
-- --lr
-- --weight-decay
-- --num-workers
-- --load-model
-- --checkpoint-file
+Expected input structure:
+    dataset/{species}/png_256_thin/image/train/
+    dataset/{species}/png_256_thin/image/valid/
+    dataset/{species}/png_256_thin/image/test/
 
-Notes:
-- This script intentionally preserves the notebook logic as closely as possible.
-- Validation uses the same model loss path as training (as in the notebook).
-- Plotting, GIF generation, and test-time visualization were intentionally left in the notebook.
+    dataset/{species}/png_512_thin/image/train/
+    dataset/{species}/png_512_thin/image/valid/
+    dataset/{species}/png_512_thin/image/test/
+
+Expected COCO JSON files:
+    train_annot_coco_256.json
+    valid_annot_coco_256.json
+    test_annot_coco_256.json
+
+or:
+    train_annot_coco_512.json
+    valid_annot_coco_512.json
+    test_annot_coco_512.json
+
+Example:
+    python ps_train.py \
+        --dataset-root /path/to/dataset \
+        --species acapod \
+        --image-size 256 \
+        --epochs 700 \
+        --batch-size 8 \
+        --checkpoint-file ./model/256_thin_acapod_700_epoch.tar
 """
 
 from __future__ import annotations
@@ -55,34 +64,56 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 # ---------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser()
 
-    p.add_argument("--species", type=str, default="acapod")
-    p.add_argument("--image-size", type=int, default=256, choices=[256, 512])
-    p.add_argument("--dataset-root", type=str, default="dataset")
-    p.add_argument("--gpu-id", type=int, default=0)
+    parser.add_argument(
+        "--dataset-root",
+        type=str,
+        default="dataset",
+        help="Dataset root. Default: dataset",
+    )
 
-    p.add_argument("--batch-size", type=int, default=8)
-    p.add_argument("--epochs", type=int, default=700)
-    p.add_argument("--lr", type=float, default=1e-5)
-    p.add_argument("--weight-decay", type=float, default=5e-4)
-    p.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument(
+        "--species",
+        type=str,
+        required=True,
+        help="Species name, e.g. acapod, alllit, burspi, euclon, exostr, hakdac.",
+    )
 
-    p.add_argument("--pin-memory", action="store_true", default=True)
-    p.add_argument("--no-pin-memory", dest="pin_memory", action="store_false")
+    parser.add_argument(
+        "--image-size",
+        type=int,
+        default=256,
+        choices=[256, 512],
+        help="Patch size used for training. Default: 256",
+    )
 
-    p.add_argument("--save-model", action="store_true", default=True)
-    p.add_argument("--no-save-model", dest="save_model", action="store_false")
+    parser.add_argument("--gpu-id", type=int, default=0)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--epochs", type=int, default=700)
+    parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--weight-decay", type=float, default=5e-4)
+    parser.add_argument("--num-workers", type=int, default=2)
 
-    p.add_argument("--load-model", action="store_true", default=False)
-    p.add_argument(
+    parser.add_argument("--pin-memory", action="store_true", default=True)
+    parser.add_argument("--no-pin-memory", dest="pin_memory", action="store_false")
+
+    parser.add_argument("--save-model", action="store_true", default=True)
+    parser.add_argument("--no-save-model", dest="save_model", action="store_false")
+
+    parser.add_argument("--load-model", action="store_true", default=False)
+
+    parser.add_argument(
         "--checkpoint-file",
         type=str,
         default=None,
-        help="Optional explicit checkpoint file path. If omitted, uses the notebook-style default name.",
+        help=(
+            "Optional checkpoint file path. "
+            "If omitted, uses ./model/{image_size}_thin_{species}_{epochs}_epoch.tar"
+        ),
     )
 
-    return p.parse_args()
+    return parser.parse_args()
 
 
 # ---------------------------
@@ -91,19 +122,13 @@ def parse_args() -> argparse.Namespace:
 
 class CCDataset(Dataset):
     """
-    COCO dataset reader for the per-species training data.
+    COCO dataset reader for per-species training data.
 
-    Expected structure:
-    dataset/<species>/png_<image_size>_thin/image/train/
-    dataset/<species>/png_<image_size>_thin/image/valid/
-    dataset/<species>/png_<image_size>_thin/image/test/
+    Expected split directory:
+        dataset/{species}/png_{image_size}_thin/image/{split}/
 
-    And inside each split directory:
-    - images (*.png)
-    - COCO annotation json:
-      train_annot_coco_<image_size>.json
-      valid_annot_coco_<image_size>.json
-      test_annot_coco_<image_size>.json
+    Expected annotation file:
+        {split}_annot_coco_{image_size}.json
     """
 
     def __init__(
@@ -127,13 +152,15 @@ class CCDataset(Dataset):
         else:
             raise ValueError(f"Unknown mode: {mode}")
 
+        if not os.path.exists(ann_path):
+            raise FileNotFoundError(
+                f"COCO annotation file not found: {ann_path}\n"
+                "Run ps_preprocess.py first, or check --dataset-root, --species, and --image-size."
+            )
+
         self.coco = COCO(ann_path)
         self.cat_ids = self.coco.getCatIds()
         self.augmentation = augmentation
-
-        # NOTE:
-        # The notebook uses index directly in loadImgs/getAnnIds.
-        # To preserve behavior while being slightly safer, we keep a stable list of image ids.
         self.image_ids = sorted(list(self.coco.imgs.keys()))
 
     def __len__(self) -> int:
@@ -145,6 +172,7 @@ class CCDataset(Dataset):
 
         masks = []
         cell_type = []
+
         for ann in anns:
             cell_type.append(ann["category_id"])
             mask = self.coco.annToMask(ann)
@@ -159,6 +187,7 @@ class CCDataset(Dataset):
 
         for i in range(len(masks)):
             x, y, w, h = cv2.boundingRect(masks[i].astype(np.uint8))
+
             if w > 0 and h > 0:
                 boxes.append([x, y, x + w, y + h])
                 valid_masks.append(masks[i])
@@ -170,23 +199,23 @@ class CCDataset(Dataset):
         image_id = self.image_ids[index]
         img_info = self.coco.loadImgs([image_id])[0]
 
-        image = cv2.imread(os.path.join(self.dataset_path, img_info["file_name"]))
+        image_path = os.path.join(self.dataset_path, img_info["file_name"])
+        image = cv2.imread(image_path)
+
         if image is None:
-            raise FileNotFoundError(
-                f"Could not read image: {os.path.join(self.dataset_path, img_info['file_name'])}"
-            )
+            raise FileNotFoundError(f"Could not read image: {image_path}")
 
         masks, cell_type = self.get_masks(image_id)
 
         if self.augmentation:
             augmented = self.augmentation(image=image, masks=masks)
-            image, masks = augmented["image"], augmented["masks"]
+            image = augmented["image"]
+            masks = augmented["masks"]
 
         image = image.transpose(2, 0, 1) / 255.0
         boxes, masks, cell_type = self.get_boxes(masks, cell_type)
 
         if len(boxes) == 0:
-            # preserve notebook intent, but avoid hard failure in collate
             return None
 
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
@@ -194,29 +223,30 @@ class CCDataset(Dataset):
         masks = torch.as_tensor(masks, dtype=torch.uint8)
         image = torch.as_tensor(image, dtype=torch.float32)
 
-        data = {
+        target = {
             "boxes": boxes,
             "labels": labels,
             "masks": masks,
         }
 
-        return image, data
+        return image, target
 
 
 def collate_fn(batch):
-    """
-    Notebook version stacked images and left targets as a list.
-    Here we also filter out None entries to avoid crashing if an image has no valid boxes.
-    """
     batch = [b for b in batch if b is not None]
+
+    if len(batch) == 0:
+        return None
 
     images = []
     targets = []
+
     for b in batch:
         images.append(b[0])
         targets.append(b[1])
 
     images = torch.stack(images, dim=0)
+
     return images, targets
 
 
@@ -228,7 +258,9 @@ transform = A.Compose([
     A.HorizontalFlip(p=0.5),
     A.VerticalFlip(p=0.5),
     A.RandomBrightnessContrast(
-        contrast_limit=0.2, brightness_limit=0.3, p=0.5
+        contrast_limit=0.2,
+        brightness_limit=0.3,
+        p=0.5,
     ),
     A.OneOf([
         A.ImageCompression(p=0.8),
@@ -253,11 +285,16 @@ def get_model(device: torch.device):
     model = maskrcnn_resnet50_fpn_v2(
         weights=MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT
     )
+
     in_features = model.roi_heads.box_predictor.cls_score.in_features
+
     model.roi_heads.box_predictor = FastRCNNPredictor(
-        in_features, num_classes=1 + 4
+        in_features,
+        num_classes=1 + 4,
     )
+
     model.to(device)
+
     return model
 
 
@@ -266,17 +303,19 @@ def get_model(device: torch.device):
 # ---------------------------
 
 def save_checkpoint(state, filename: str) -> None:
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    checkpoint_path = Path(filename)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
     print("=> Model improved, saving checkpoint")
     torch.save(state, filename)
 
 
 def load_checkpoint(checkpoint, model, optimizer, lr: float) -> None:
     print("=> Loading checkpoint")
+
     model.load_state_dict(checkpoint["state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer"])
 
-    # preserve notebook behavior
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
@@ -287,11 +326,20 @@ def load_checkpoint(checkpoint, model, optimizer, lr: float) -> None:
 
 def train_one_epoch(loader, model, optimizer, device: torch.device) -> float:
     model.train()
+
     last_loss = 0.0
 
-    for images, targets in loader:
+    for batch in loader:
+        if batch is None:
+            continue
+
+        images, targets = batch
+
         images = [image.to(device) for image in images]
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [
+            {k: v.to(device) for k, v in target.items()}
+            for target in targets
+        ]
 
         loss_dict = model(images, targets)
         losses = sum(loss for loss in loss_dict.values())
@@ -307,45 +355,65 @@ def train_one_epoch(loader, model, optimizer, device: torch.device) -> float:
 
 best_vloss = np.inf
 
-def validate(loader, model, optimizer, device: torch.device, epoch: int,
-             save_model: bool, checkpoint_path: str) -> torch.Tensor:
+
+def validate(
+    loader,
+    model,
+    device: torch.device,
+    save_model: bool,
+    checkpoint_path: str,
+    optimizer,
+) -> torch.Tensor:
     """
-    Preserves the notebook logic:
-    - validation still uses model(images, targets) to compute losses
-    - best checkpoint is determined by avg validation loss
+    Validation uses model(images, targets) to compute validation loss.
+
+    Detection models need train mode for loss computation.
+    This follows the original notebook logic.
     """
     global best_vloss
 
-    # Detection models typically need train mode for loss computation.
     model.train()
 
     running_vloss = 0.0
-    last_batch_idx = -1
+    valid_batches = 0
 
-    for batch_idx, (images, targets) in enumerate(loader):
+    for batch in loader:
+        if batch is None:
+            continue
+
+        images, targets = batch
+
         images = [image.to(device) for image in images]
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [
+            {k: v.to(device) for k, v in target.items()}
+            for target in targets
+        ]
 
         with torch.no_grad():
             loss_dict = model(images, targets)
 
         losses = sum(loss for loss in loss_dict.values())
         running_vloss += losses
-        last_batch_idx = batch_idx
+        valid_batches += 1
 
-    if last_batch_idx < 0:
-        raise RuntimeError("Validation loader produced no batches.")
+    if valid_batches == 0:
+        raise RuntimeError("Validation loader produced no valid batches.")
 
-    avg_vloss = running_vloss / (last_batch_idx + 1)
+    avg_vloss = running_vloss / valid_batches
 
     if avg_vloss < best_vloss:
         best_vloss = avg_vloss
+
         if save_model:
             checkpoint = {
                 "state_dict": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
             }
-            save_checkpoint(checkpoint, filename=checkpoint_path)
+
+            save_checkpoint(
+                checkpoint,
+                filename=checkpoint_path,
+            )
 
     return avg_vloss
 
@@ -361,16 +429,24 @@ def main():
         f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu"
     )
 
+    dataset_root = args.dataset_root
     species = args.species
     image_size = args.image_size
-    dataset_root = args.dataset_root
 
-    train_dir = f"{dataset_root}/{species}/png_{image_size}_thin/image/train"
-    valid_dir = f"{dataset_root}/{species}/png_{image_size}_thin/image/valid"
-    test_dir = f"{dataset_root}/{species}/png_{image_size}_thin/image/test"
+    train_dir = (
+        f"{dataset_root}/{species}/png_{image_size}_thin/image/train"
+    )
+    valid_dir = (
+        f"{dataset_root}/{species}/png_{image_size}_thin/image/valid"
+    )
+    test_dir = (
+        f"{dataset_root}/{species}/png_{image_size}_thin/image/test"
+    )
 
     if args.checkpoint_file is None:
-        checkpoint_path = f"./checkpoint/{image_size}_thin_{species}_{args.epochs}_epoch.tar"
+        checkpoint_path = (
+            f"./model/{image_size}_thin_{species}_{args.epochs}_epoch.tar"
+        )
     else:
         checkpoint_path = args.checkpoint_file
 
@@ -380,6 +456,7 @@ def main():
     print(f"image_size      : {image_size}")
     print(f"train_dir       : {train_dir}")
     print(f"valid_dir       : {valid_dir}")
+    print(f"test_dir        : {test_dir}")
     print(f"checkpoint_path : {checkpoint_path}")
     print(f"batch_size      : {args.batch_size}")
     print(f"epochs          : {args.epochs}")
@@ -394,6 +471,7 @@ def main():
         test_dir=test_dir,
         augmentation=transform,
     )
+
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=args.batch_size,
@@ -411,6 +489,7 @@ def main():
         test_dir=test_dir,
         augmentation=None,
     )
+
     valid_loader = DataLoader(
         dataset=valid_dataset,
         batch_size=args.batch_size,
@@ -421,45 +500,56 @@ def main():
     )
 
     model = get_model(device=device)
+
     optimizer = torch.optim.AdamW(
         params=model.parameters(),
         lr=args.lr,
         weight_decay=args.weight_decay,
     )
 
-    if args.load_model and os.path.exists(checkpoint_path):
-        print("Loading checkpoint")
+    if args.load_model:
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(
+                f"--load-model was specified, but checkpoint was not found: {checkpoint_path}"
+            )
+
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+
         load_checkpoint(
-            torch.load(checkpoint_path, map_location=device),
-            model,
-            optimizer,
-            args.lr,
+            checkpoint=checkpoint,
+            model=model,
+            optimizer=optimizer,
+            lr=args.lr,
         )
 
     total_loss = []
     valid_loss = []
 
     for epoch in range(args.epochs):
-        tloss = train_one_epoch(train_loader, model, optimizer, device)
+        tloss = train_one_epoch(
+            loader=train_loader,
+            model=model,
+            optimizer=optimizer,
+            device=device,
+        )
+
         vloss = validate(
-            valid_loader,
-            model,
-            optimizer,
-            device,
-            epoch,
+            loader=valid_loader,
+            model=model,
+            device=device,
             save_model=args.save_model,
             checkpoint_path=checkpoint_path,
+            optimizer=optimizer,
         )
 
         total_loss.append(tloss)
         valid_loss.append(vloss.cpu().item())
 
-        comment = (
+        print(
             f"Epoch: {epoch}  "
             f"Total loss: {tloss:.3f}  "
             f"Avg Valid Loss: {vloss:.3f}"
         )
-        print(comment)
 
     print("Training finished!")
 
