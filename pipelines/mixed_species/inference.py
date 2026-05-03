@@ -150,7 +150,7 @@ def predict_patch(
     with torch.no_grad():
         pred = model(images)
 
-    label_to_gray = {1: 64, 2: 128, 3: 192, 4: 255}
+    label_to_gray =  {1: 255, 2: 191, 3: 127, 4: 63}
 
     height, width = images[0].shape[1:]
     im_label = np.zeros((height, width), dtype=np.uint8)
@@ -310,7 +310,7 @@ def clean_prediction(img_pred: np.ndarray) -> tuple[np.ndarray, pd.DataFrame]:
 
     def get_gray(region_label):
         output = img_pred[new_labels == region_label]
-        out = output[np.isin(output, [64, 128, 192, 255])]
+        out = output[np.isin(output, [255, 191, 127, 63])]
         if len(out) == 0:
             return 0
         gl = np.argmax(np.bincount(out))
@@ -364,11 +364,11 @@ def export_coco_if_requested(cleaned_img: np.ndarray, data_img: str, out_json: s
     }
 
     category_colors = {
+        "(255, 255, 255)": 1,
+        "(191, 191, 191)": 2,
+        "(127, 127, 127)": 3,
+        "(63, 63, 63)": 4,
         "(0, 0, 0)": 0,
-        "(64, 64, 64)": 1,
-        "(128, 128, 128)": 2,
-        "(192, 192, 192)": 3,
-        "(255, 255, 255)": 4,
     }
 
     multipolygon_ids = []
