@@ -1,151 +1,322 @@
-# Per-species pipeline（種別モデル）
-
-このディレクトリは、論文（「@@@」第「@@@」節）で説明している **per-species model（種別モデル）** を実装したものです。  
-この設定では、**各樹種ごとに独立したモデルを個別に学習**し、その樹種から得られた画像パッチのみを使用します。  
-交差種汎化を必要としないため、**同一ドメイン内性能の上限（upper-bound）**を与えるベンチマークとして位置づけられます。
-
-## このパイプラインが行うこと
-
-- 樹種ごとに **1つの Mask R-CNN モデル**を学習
-- 対応する樹種専用チェックポイントを用いて推論を実行
-- すべての出力を共通の `runs/` 構造に保存し、`evaluation/` による一貫した評価を可能にする
-
-## 実行方法
-
-### 1) 設定
-`config.yaml` を編集し、パスや実験パラメータを設定してください。
-
-確認すべき主な項目（実際のキー名は設定により異なる場合があります）：
-- `data_root`：画像パッチのパス
-- `ann_path` / `coco_json`：COCO形式アノテーションのパス（使用する場合）
-- `species_list`：処理対象とする樹種ID／名称のリスト
-- `out_dir`：出力ディレクトリ（推奨：`runs/per_species/`）
-- `seed`：乱数シード
-- `device`：`cuda` または `cpu`
-
-### 2) 学習
-レポジトリのルートから以下を実行します：
-
-    python pipelines/per_species/train.py --config pipelines/per_species/config.yaml
-
-期待される挙動：
-- `species_list` に含まれる樹種を順に処理
-- 各樹種ごとにモデルを学習
-- 以下の構造でチェックポイントを保存：
-
-    runs/per_species/<experiment_id>/<species_id>/ckpt/
-
-### 3) 推論
-レポジトリのルートから以下を実行します：
-
-    python pipelines/per_species/inference.py --config pipelines/per_species/config.yaml
-
-期待される挙動：
-- 各樹種に対応するチェックポイントを読み込み
-- 以下の構造で予測結果を保存：
-
-    runs/per_species/<experiment_id>/<species_id>/preds/
-
-## 出力（共通規約）
-
-本パイプラインは、以下の共通 `runs/` 構造に従って出力を生成します：
-
-    runs/
-      per_species/
-        <experiment_id>/
-          <species_id>/
-            ckpt/      学習済みモデル
-            preds/     推論されたインスタンスマスク（および／または COCO 形式出力）
-            scores/    評価結果（通常は evaluation/ により生成）
-
-`evaluation/score_all.py` は、すべてのパイプラインでこの共通構造が維持されていることを前提としています。
-
-## 注意事項
-
-- このパイプラインは **同一樹種内での性能上限**を評価するためのベンチマークです。
-- 樹種間の汎化性能を目的としたものではありません。
-- `notebooks/per_species/` 以下の Jupyter Notebook は、確認・可視化・図表作成用です。実装の正本ではありません。
-
-## 論文との対応関係
-
-- 論文中のモデル名：**Per-species model**
-- 対応するディレクトリ：`pipelines/per_species/`
-- 関連する図表： "@@@"
-
-
-
-
-
-
 # Per-species pipeline
 
-This directory implements the **per-species model** described in the paper ("@@@": Section "@@@").  
-In this setting, **separate models are trained independently for each species**, using only image patches derived from that species. This serves as an upper-bound benchmark for within-domain performance (no cross-species generalisation is required).
+This directory implements the per-species model described in the paper ("@@@": Section "@@@").
+
+In this setting, separate Mask R-CNN models are trained independently for each species using only the image patches derived from that species. This pipeline serves as an upper-bound benchmark for within-domain performance, because training and evaluation data share the same species-specific anatomical characteristics.
+
+## Files
+
+```text
+pipelines/per_species/
+├─ preprocess.py
+├─ train.py
+├─ inference.py
+└─ README.md
+```
 
 ## What this pipeline does
 
-- Trains one Mask R-CNN model **per species**
-- Runs inference using the corresponding species-specific checkpoint
-- Writes outputs to the common `runs/` structure so that `evaluation/` can score results consistently
+1. `preprocess.py`
+   - reads image/mask pairs separately for each species
+   - resizes original images and masks to 1536 × 1536 by default
+   - creates 256 × 256 and 512 × 512 patches
+   - splits patches into train / valid / test within each original image
+   - writes image and mask patches
+   - creates COCO JSON annotation files for each species
+
+2. `train.py`
+   - trains one Mask R-CNN model for one species
+   - reads COCO-formatted annotations
+   - saves the best checkpoint based on validation loss
+
+3. `inference.py`
+   - loads a trained per-species checkpoint
+   - runs single-frame or multi-frame inference
+   - saves raw prediction images, cleaned prediction images, and regionprops tables
+
+## Input data
+
+The preprocessing script expects the original dataset to be organised by species:
+
+```text
+dataset/
+├─ acapod/
+│  └─ original/
+│     ├─ image/
+│     │  ├─ acapod3_01_img.png
+│     │  ├─ acapod3_02_img.png
+│     │  └─ ...
+│     └─ mask/
+│        ├─ acapod3_01_msk.png
+│        ├─ acapod3_02_msk.png
+│        └─ ...
+├─ alllit/
+├─ burspi/
+├─ euclon/
+├─ exostr/
+└─ hakdac/
+```
+
+Images and masks are matched by their shared image ID:
+
+```text
+image: <ID>_img.png
+mask : <ID>_msk.png
+```
+
+Example:
+
+```text
+image: acapod3_01_img.png
+mask : acapod3_01_msk.png
+```
+
+## Preprocessing output
+
+`preprocess.py` creates the following structure for each species:
+
+```text
+dataset/
+└─ acapod/
+   ├─ png_256_thin/
+   │  ├─ image/
+   │  │  ├─ train/
+   │  │  ├─ valid/
+   │  │  └─ test/
+   │  └─ mask/
+   │     ├─ train/
+   │     ├─ valid/
+   │     └─ test/
+   │
+   └─ png_512_thin/
+      ├─ image/
+      │  ├─ train/
+      │  ├─ valid/
+      │  └─ test/
+      └─ mask/
+         ├─ train/
+         ├─ valid/
+         └─ test/
+```
+
+Patch files are saved using notebook-style filenames:
+
+```text
+{patch_number:04}_{original_image_id}.png
+```
+
+Example:
+
+```text
+dataset/acapod/png_256_thin/image/train/0000_acapod3_01.png
+dataset/acapod/png_256_thin/mask/train/0000_acapod3_01.png
+```
+
+The mask patch uses the same basename as the image patch, following the original notebook design.
+
+## COCO annotation files
+
+By default, `preprocess.py` also creates COCO JSON annotation files in the image split directories:
+
+```text
+dataset/acapod/png_256_thin/image/train/train_annot_coco_256.json
+dataset/acapod/png_256_thin/image/valid/valid_annot_coco_256.json
+dataset/acapod/png_256_thin/image/test/test_annot_coco_256.json
+
+dataset/acapod/png_512_thin/image/train/train_annot_coco_512.json
+dataset/acapod/png_512_thin/image/valid/valid_annot_coco_512.json
+dataset/acapod/png_512_thin/image/test/test_annot_coco_512.json
+```
+
+These files are required by `train.py`.
 
 ## How to run
 
-### 1) Configure
-Edit `config.yaml` to set paths and experiment parameters.
+Run commands from the repository root, or specify `--dataset-root` explicitly.
 
-Key items to check (names may differ depending on your config):
-- `data_root`: path to image patches
-- `ann_path` / `coco_json`: path to COCO annotations (if used)
-- `species_list`: list of species IDs/names to iterate over
-- `out_dir`: output base directory (recommended: `runs/per_species/`)
-- `seed`: random seed
-- `device`: `cuda` or `cpu`
+### 1. Check preprocessing without writing files
 
-### 2) Train
-From the repository root:
+For one species:
 
-    python pipelines/per_species/train.py --config pipelines/per_species/config.yaml
+```bash
+python pipelines/per_species/preprocess.py \
+  --dataset-root /path/to/dataset \
+  --species acapod \
+  --dry-run
+```
 
-Expected behaviour:
-- Iterates over species in `species_list`
-- Trains one model per species
-- Saves checkpoints under:
+For all species directories under `dataset/`:
 
-    runs/per_species/<experiment_id>/<species_id>/ckpt/
+```bash
+python pipelines/per_species/preprocess.py \
+  --dataset-root /path/to/dataset \
+  --species all \
+  --dry-run
+```
 
-### 3) Inference
-From the repository root:
+If the dataset is located at `dataset/` relative to the current working directory, this is enough:
 
-    python pipelines/per_species/inference.py --config pipelines/per_species/config.yaml
+```bash
+python pipelines/per_species/preprocess.py \
+  --species acapod \
+  --dry-run
+```
 
-Expected behaviour:
-- Loads the checkpoint for each species
-- Writes predictions under:
+### 2. Run preprocessing
 
-    runs/per_species/<experiment_id>/<species_id>/preds/
+For one species:
 
-## Outputs (convention)
+```bash
+python pipelines/per_species/preprocess.py \
+  --dataset-root /path/to/dataset \
+  --species acapod
+```
 
-This pipeline follows the shared output convention under `runs/`:
+For all species:
 
-    runs/
-      per_species/
-        <experiment_id>/
-          <species_id>/
-            ckpt/      trained checkpoints
-            preds/     predicted instance masks (and/or COCO-style outputs)
-            scores/    evaluation outputs (optional; usually written by evaluation/)
+```bash
+python pipelines/per_species/preprocess.py \
+  --dataset-root /path/to/dataset \
+  --species all
+```
 
-`evaluation/score_all.py` assumes outputs are organised consistently across pipelines.
+Default settings:
+
+```text
+dataset-root = dataset
+image-size   = 1536
+patch-sizes  = 256 512
+seed         = None
+COCO JSON    = created
+```
+
+To make the train / valid / test split reproducible:
+
+```bash
+python pipelines/per_species/preprocess.py \
+  --dataset-root /path/to/dataset \
+  --species acapod \
+  --seed 0
+```
+
+To create patches without COCO JSON:
+
+```bash
+python pipelines/per_species/preprocess.py \
+  --dataset-root /path/to/dataset \
+  --species acapod \
+  --no-create-coco-json
+```
+
+### 3. Train
+
+Train a 256-patch model for one species:
+
+```bash
+python pipelines/per_species/train.py \
+  --dataset-root /path/to/dataset \
+  --species acapod \
+  --image-size 256 \
+  --epochs 700 \
+  --batch-size 8 \
+  --checkpoint-file ./model/256_thin_acapod_700_epoch.tar
+```
+
+Train a 512-patch model for one species:
+
+```bash
+python pipelines/per_species/train.py \
+  --dataset-root /path/to/dataset \
+  --species acapod \
+  --image-size 512 \
+  --epochs 700 \
+  --batch-size 8 \
+  --checkpoint-file ./model/512_thin_acapod_700_epoch.tar
+```
+
+For a safe one-epoch test run:
+
+```bash
+python pipelines/per_species/train.py \
+  --dataset-root /path/to/dataset \
+  --species acapod \
+  --image-size 256 \
+  --epochs 1 \
+  --batch-size 1 \
+  --checkpoint-file ./tmp_checkpoints/ps_acapod_test_1epoch.tar
+```
+
+### 4. Inference
+
+Single-frame inference:
+
+```bash
+python pipelines/per_species/inference.py \
+  --dataset-root /path/to/dataset \
+  --species acapod \
+  --image-size 256 \
+  --checkpoint-file ./model/256_thin_acapod_700_epoch.tar \
+  --mode single \
+  --test-index 0 \
+  --output-root ./inference_results_per_species
+```
+
+Single-frame inference with an explicitly specified image:
+
+```bash
+python pipelines/per_species/inference.py \
+  --dataset-root /path/to/dataset \
+  --species acapod \
+  --image-size 256 \
+  --checkpoint-file ./model/256_thin_acapod_700_epoch.tar \
+  --mode single \
+  --input-image /path/to/image.png \
+  --output-root ./inference_results_per_species
+```
+
+Multi-frame inference:
+
+```bash
+python pipelines/per_species/inference.py \
+  --dataset-root /path/to/dataset \
+  --species acapod \
+  --image-size 256 \
+  --checkpoint-file ./model/256_thin_acapod_700_epoch.tar \
+  --mode multi \
+  --input-image /path/to/full_size_image.png \
+  --output-root ./inference_results_per_species
+```
+
+For multi-frame inference, specifying `--input-image` is recommended.
+
+## Inference output
+
+`inference.py` writes outputs under the specified `--output-root`.
+
+Example:
+
+```text
+inference_results_per_species/
+└─ 256_per_species_acapod_<checkpoint_name>/
+   ├─ prediction_raw/
+   │  └─ <image_id>_prediction_raw.png
+   ├─ prediction_cleaned/
+   │  └─ <image_id>_pred_cleaned.png
+   └─ <image_id>_regionprops.csv
+```
 
 ## Notes
 
-- This pipeline is designed as a **within-domain upper-bound** benchmark: it maximises within-species fit but is not intended to generalise across species.
-- Jupyter notebooks under `notebooks/per_species/` are provided for inspection and figure generation; they are not the authoritative implementation.
+- This pipeline trains one model per species.
+- It is intended as a within-domain benchmark.
+- It does not test cross-species generalisation directly.
+- The authoritative implementation is in `pipelines/per_species/`.
+- Jupyter notebooks under `notebooks/per_species/` are retained for inspection, visualisation, and figure generation.
+- This pipeline does not currently use `config.yaml`.
+- Outputs are controlled through CLI arguments such as `--dataset-root`, `--species`, `--checkpoint-file`, and `--output-root`.
 
 ## Paper mapping
 
-- Model name in paper: **Per-species model**
+- Model name in paper: Per-species model
 - Corresponding directory: `pipelines/per_species/`
 - Related figures/tables: "@@@"
-
