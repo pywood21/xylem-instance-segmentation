@@ -1,45 +1,31 @@
 # Xylem instance segmentation
 
-This repository provides image-analysis code for instance segmentation of xylem cells across multiple species, together with downstream evaluation and network-analysis notebooks.
+This repository provides code for instance segmentation of xylem cells across multiple species, together with evaluation and downstream network-analysis notebooks.
 
-The repository contains:
+The code accompanies the following paper:
 
-1. segmentation pipelines for three modelling strategies;
-2. notebooks corresponding to the original analysis workflow;
-3. cross-pipeline evaluation notebooks; and
-4. network-analysis notebooks for analysing xylem cell adjacency, vessel–axial parenchyma connectivity, and vessel–ray graph distances.
-
-## Paper information
-
-This code accompanies the following paper:
-
-- **Title:** "@@@"
-- **Authors:** "@@@"
+- **Title:** "From segmentation to networks: Mask R-CNN and graph analysis uncover vessel–parenchyma organisation in hardwood xylem"
+- **Authors:** "Nodoka Izumi, Ian J. Wright, Shubham Chhajed, Kasia Ziemińska, Junji Sugiyama"
 - **Journal / Preprint:** "@@@"
 - **Year:** "@@@"
 - **DOI / arXiv:** "@@@"
 
 ## Overview
 
-The segmentation analysis compares three modelling strategies described in the paper.
+This repository implements three segmentation workflows described in the paper.
 
 ### Per-species model
 
-Separate Mask R-CNN models are trained independently for each species using only image patches derived from that species.
-
-This approach serves as a within-domain benchmark because training and evaluation data share the same species-specific image characteristics.
+Separate Mask R-CNN models are trained independently for each species using image patches derived only from that species.
 
 ### Mixed-species model
 
-A single Mask R-CNN model is trained using pooled image patches from all species.
-
-This model does not explicitly use species or domain labels and serves as a standard multi-species baseline.
+A single Mask R-CNN model is trained using pooled image patches from all species, without explicit species or domain labels.
 
 ### Domain-adaptive model
 
-A single Mask R-CNN model is trained using pooled multi-species data with an adversarial domain-adaptation framework.
-
-This model incorporates a gradient reversal layer and a domain classifier to encourage domain-invariant feature learning across species.
+A single Mask R-CNN model is trained using pooled multi-species data with an adversarial domain-adaptation framework.  
+The model uses a gradient reversal layer and a domain classifier to encourage domain-invariant feature learning.
 
 ## Repository structure
 
@@ -59,261 +45,115 @@ xylem-instance-segmentation/
 │
 ├─ pipelines/
 │  ├─ per_species/
-│  │  ├─ README.md
-│  │  ├─ preprocess.py
-│  │  ├─ train.py
-│  │  └─ inference.py
-│  │
 │  ├─ mixed_species/
-│  │  ├─ README.md
-│  │  ├─ preprocess.py
-│  │  ├─ train.py
-│  │  └─ inference.py
-│  │
 │  └─ domain_adaptive/
-│     ├─ README.md
-│     ├─ preprocess.py
-│     ├─ train.py
-│     └─ inference.py
 │
 ├─ notebooks/
 │  ├─ per_species/
 │  ├─ mixed_species/
 │  ├─ domain_adaptive/
 │  ├─ network_analysis/
-│  │  ├─ README.md
-│  │  ├─ 00_visualise_partial_graph.ipynb
-│  │  ├─ 01_vap_connectivity.ipynb
-│  │  └─ 02_vessel_ray_distance_path_composition.ipynb
-│  │
 │  └─ evaluation/
-│     └─ 00_score_comparison.ipynb
 │
 ├─ network_analysis_outputs/
 ├─ evaluation_outputs/
 └─ examples/
 ```
 
-## Main components
+## Main directories
 
 ### `src/`
 
-The `src/` directory contains shared source code used by the segmentation pipelines where applicable.
+Shared source code used by the segmentation pipelines where applicable.
 
-Typical contents include:
-
-- dataset handling;
-- model definitions;
-- metric calculation;
-- post-processing utilities; and
-- helper functions.
-
-Some pipeline-specific logic is kept inside the corresponding `pipelines/` subdirectory because the three modelling strategies use slightly different data structures and execution workflows.
+This may include dataset handling, model definitions, metric functions, post-processing utilities, and helper functions.
 
 ### `pipelines/`
 
-The `pipelines/` directory contains executable scripts for the three segmentation workflows.
+Command-line scripts for preprocessing, training, and inference.
 
-Each pipeline contains:
+Each pipeline directory contains its own README:
 
-- `preprocess.py`: prepares image and mask patches and, where applicable, COCO-style annotation files;
-- `train.py`: trains the Mask R-CNN model;
-- `inference.py`: runs inference using a trained checkpoint;
-- `README.md`: explains the pipeline-specific input structure and execution procedure.
+- `pipelines/per_species/README.md`
+- `pipelines/mixed_species/README.md`
+- `pipelines/domain_adaptive/README.md`
 
-The scripts are designed to be run from the command line. User-specific values such as dataset location, species name, image size, checkpoint file, and output directory are supplied as command-line arguments.
+These files explain the expected input structure, command-line arguments, and output locations for each modelling strategy.
 
 ### `notebooks/`
 
-The `notebooks/` directory contains the original or cleaned analysis notebooks.
+Jupyter notebooks documenting the original workflow, visualisation steps, evaluation, and network analysis.
 
-The segmentation notebooks are kept to document the exploratory and original execution workflow. The corresponding `pipelines/` scripts provide cleaner command-line implementations where available.
+The main notebook groups are:
 
-The network-analysis notebooks are used for downstream structural analysis and figure generation.
+- `notebooks/per_species/`
+- `notebooks/mixed_species/`
+- `notebooks/domain_adaptive/`
+- `notebooks/network_analysis/`
+- `notebooks/evaluation/`
+
+The notebooks are provided for inspection, demonstration, figure generation, and downstream analysis.  
+Where available, the corresponding `pipelines/` scripts provide cleaner command-line implementations.
 
 ### `notebooks/network_analysis/`
 
-This directory contains notebooks for graph-based analysis of xylem cell adjacency.
+Network-analysis notebooks for graph-based analysis of xylem cell adjacency.
 
-The recommended structure is:
+These notebooks cover:
 
-```text
-notebooks/network_analysis/
-├─ README.md
-├─ 00_visualise_partial_graph.ipynb
-├─ 01_vap_connectivity.ipynb
-└─ 02_vessel_ray_distance_path_composition.ipynb
-```
+- visualisation of vessel–parenchyma–ray graphs;
+- vessel–axial parenchyma connectivity;
+- vessel–ray graph distance;
+- vessel-to-vessel shortest-path composition.
 
-These notebooks analyse:
-
-1. partial vessel–parenchyma–ray graph visualisation;
-2. vessel–axial parenchyma connectivity; and
-3. vessel–ray graph distance and vessel-to-vessel shortest-path composition.
-
-Outputs are saved to:
+Outputs are written to:
 
 ```text
 network_analysis_outputs/
-```
-
-Typical outputs include:
-
-```text
-network_analysis_outputs/
-├─ G_vpr_panels.pdf
-├─ df_for_weighted_degree.csv
-├─ vessel_level_connectivity_summary.csv
-├─ weighted_degree_scatter_with_means.pdf
-├─ v_to_nearest_ray_distances_with_hops.csv
-├─ hops_hist_vertical.png
-├─ hops_hist_vertical.pdf
-├─ vessel_ray_distance_summary_by_species.csv
-├─ vv_shortest_paths_composition_LITE.csv
-├─ vv_avg_composition_by_species_LITE.png
-└─ vv_avg_composition_by_species_LITE.pdf
 ```
 
 ### `notebooks/evaluation/`
 
-This directory contains notebooks for comparing segmentation performance across the three modelling strategies.
+Evaluation notebooks for comparing segmentation performance across the three modelling strategies.
 
-The main notebook is:
+The main notebook aggregates score CSV files generated by the segmentation pipelines and produces comparison figures and summary tables.
 
-```text
-notebooks/evaluation/00_score_comparison.ipynb
-```
-
-This notebook aggregates score CSV files generated by the segmentation pipelines and produces comparison figures and summary tables.
-
-Outputs are saved to:
+Outputs are written to:
 
 ```text
 evaluation_outputs/
 ```
 
-Typical outputs include:
+## How to reproduce
+
+Detailed instructions are provided in the pipeline-specific README files:
+
+- `pipelines/per_species/README.md`
+- `pipelines/mixed_species/README.md`
+- `pipelines/domain_adaptive/README.md`
+
+In general, each segmentation workflow follows three steps:
 
 ```text
-evaluation_outputs/
-├─ all_model_scores.csv
-├─ mean_dice_scores.csv
-├─ mean_iou_scores.csv
-├─ accuracy_scores.csv
-├─ mean_dice.pdf
-├─ mean_iou.pdf
-├─ accuracy.pdf
-├─ per_class_dice_heatmap.pdf
-├─ per_class_dice_heatmap.png
-├─ per_class_iou_heatmap.pdf
-└─ per_class_iou_heatmap.png
+1. preprocessing
+2. training
+3. inference
 ```
 
-## Example usage
+Evaluation and downstream analysis are then performed using notebooks under:
 
-### Per-species pipeline
-
-Preprocessing:
-
-```bash
-python pipelines/per_species/preprocess.py \
-  --dataset-root @@@ \
-  --species @@@ \
-  --image-size 256
-```
-
-Training:
-
-```bash
-python pipelines/per_species/train.py \
-  --dataset-root @@@ \
-  --species @@@ \
-  --image-size 256 \
-  --epochs @@@ \
-  --batch-size @@@ \
-  --checkpoint-file @@@
-```
-
-Inference:
-
-```bash
-python pipelines/per_species/inference.py \
-  --dataset-root @@@ \
-  --species @@@ \
-  --image-size 256 \
-  --checkpoint-file @@@ \
-  --output-root @@@
-```
-
-### Mixed-species pipeline
-
-Preprocessing:
-
-```bash
-python pipelines/mixed_species/preprocess.py \
-  --dataset-root @@@ \
-  --image-size 256
-```
-
-Training:
-
-```bash
-python pipelines/mixed_species/train.py \
-  --dataset-root @@@ \
-  --image-size 256 \
-  --epochs @@@ \
-  --batch-size @@@ \
-  --checkpoint-file @@@
-```
-
-Inference:
-
-```bash
-python pipelines/mixed_species/inference.py \
-  --dataset-root @@@ \
-  --image-size 256 \
-  --checkpoint-file @@@ \
-  --output-root @@@
-```
-
-### Domain-adaptive pipeline
-
-Preprocessing:
-
-```bash
-python pipelines/domain_adaptive/preprocess.py \
-  --dataset-root @@@ \
-  --image-size 256
-```
-
-Training:
-
-```bash
-python pipelines/domain_adaptive/train.py \
-  --dataset-root @@@ \
-  --image-size 256 \
-  --epochs @@@ \
-  --batch-size @@@ \
-  --checkpoint-file @@@
-```
-
-Inference:
-
-```bash
-python pipelines/domain_adaptive/inference.py \
-  --dataset-root @@@ \
-  --image-size 256 \
-  --checkpoint-file @@@ \
-  --output-root @@@
+```text
+notebooks/evaluation/
+notebooks/network_analysis/
 ```
 
 ## Data and outputs
 
-Large raw microscopy images, generated training patches, trained checkpoints, and full inference outputs are not necessarily tracked in this repository.
+Large raw microscopy images, generated patches, trained model checkpoints, and full inference outputs are not necessarily tracked in this repository.
 
-The expected input data structure is documented in each pipeline-specific README.
+The expected input data structure is described in each pipeline-specific README.
 
-Generated outputs should be written to local output directories such as:
+Generated outputs may include:
 
 ```text
 runs/
@@ -321,20 +161,7 @@ network_analysis_outputs/
 evaluation_outputs/
 ```
 
-Large files such as model checkpoints and full prediction outputs should not be committed to GitHub unless explicitly intended.
-
-Recommended ignored files include:
-
-```text
-runs/
-__pycache__/
-.ipynb_checkpoints/
-*.ckpt
-*.pth
-*.pt
-*.tar
-*.log
-```
+Large generated files should not be committed to GitHub unless explicitly intended.
 
 ## Data availability
 
@@ -342,7 +169,7 @@ The original microscopy images used in the study are "@@@".
 
 - **Data availability status:** "@@@"
 - **Restrictions, if any:** "@@@"
-- **Example data:** The `examples/` directory provides minimal example data or format specifications where available.
+- **Example data:** The `examples/` directory provides minimal example data or input-format specifications where available.
 
 ## Experimental environment
 
@@ -374,7 +201,6 @@ Core requirements include:
 - Python >= 3.9
 - PyTorch
 - torchvision
-- CUDA-compatible GPU, optional but recommended for training
 - NumPy
 - pandas
 - scikit-image
@@ -385,25 +211,7 @@ Core requirements include:
 - pycocotools
 - albumentations
 
-See `requirements.txt` or `environment.yml` for the exact environment.
-
-## Reproducibility notes
-
-The repository contains both notebooks and command-line scripts.
-
-- The `notebooks/` directory documents the original analysis workflow, visualisation, evaluation, and network-analysis procedures.
-- The `pipelines/` directory contains cleaned executable scripts for preprocessing, training, and inference.
-- The network-analysis and evaluation notebooks may require intermediate outputs generated by the segmentation pipelines.
-
-For full reproduction, users should check:
-
-1. input data paths;
-2. image size;
-3. species name, where applicable;
-4. checkpoint file path;
-5. output directory;
-6. generated score CSV paths; and
-7. graph files used in network analysis.
+A CUDA-compatible GPU is recommended for model training.
 
 ## License
 
