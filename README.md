@@ -188,12 +188,6 @@ Exact dependency versions are provided in:
 requirements.txt
 ```
 
-or:
-
-```text
-environment.yml
-```
-
 ## Requirements
 
 Core requirements include:
