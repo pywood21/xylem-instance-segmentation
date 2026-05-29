@@ -38,10 +38,9 @@ xylem-instance-segmentation/
 ├─ requirements.txt or environment.yml
 │
 ├─ src/
-│  ├─ data/
-│  ├─ models/
-│  ├─ metrics/
-│  └─ utils/
+│  ├─ src_per_species/
+│  ├─ src_mixed_species/
+│  └─ src_domain_adaptive/
 │
 ├─ pipelines/
 │  ├─ per_species/
