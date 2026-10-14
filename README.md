@@ -1,219 +1,65 @@
-# Xylem instance segmentation
+# Xylem instance segmentation and network analysis
 
-This repository provides code for instance segmentation of xylem cells across multiple species, together with evaluation and downstream network-analysis notebooks.
+Code accompanying:
 
-The code accompanies the following paper:
-
-- **Title:** "From segmentation to networks: Mask R-CNN and graph analysis uncover vessel–parenchyma organisation in hardwood xylem"
-- **Authors:** "Nodoka Izumi, Ian J. Wright, Shubham Chhajed, Kasia Ziemińska, Junji Sugiyama"
-- **Journal / Preprint:** "@@@"
-- **Year:** "@@@"
-- **DOI / arXiv:** "@@@"
-
-## Overview
-
-This repository implements three segmentation workflows described in the paper.
-
-### Per-species model
-
-Separate Mask R-CNN models are trained independently for each species using image patches derived only from that species.
-
-### Mixed-species model
-
-A single Mask R-CNN model is trained using pooled image patches from all species, without explicit species or domain labels.
-
-### Domain-adaptive model
-
-A single Mask R-CNN model is trained using pooled multi-species data with an adversarial domain-adaptation framework.  
-The model uses a gradient reversal layer and a domain classifier to encourage domain-invariant feature learning.
+Izumi, N., Wright, I. J., Chhajed, S., Ziemińska, K., and Sugiyama, J.
+From segmentation to networks: Mask R-CNN and graph analysis uncover
+vessel–parenchyma organisation in angiosperm xylem.
+DOI: https://doi.org/10.1007/s00468-026-02838-8
 
 ## Repository structure
 
-```text
-xylem-instance-segmentation/
-├─ README.md
-├─ LICENSE
-├─ CITATION.cff
-├─ .gitignore
-├─ requirements.txt or environment.yml
-│
-├─ src/
-│  ├─ per_species/
-│  ├─ mixed_species/
-│  └─ domain_adaptive/
-│
-├─ pipelines/
-│  ├─ per_species/
-│  ├─ mixed_species/
-│  └─ domain_adaptive/
-│
-├─ notebooks/
-│  ├─ model_per_species/
-│  ├─ model_mixed_species/
-│  ├─ model_domain_adaptive/
-│  ├─ network_analysis/
-│  └─ evaluation/
-│
-├─ network_analysis_outputs/
-├─ evaluation_outputs/
-└─ examples/
+- PS_model/: Per-species model workflow
+- MS_model/: Mixed-species model workflow
+- DA_model/: Domain-adaptive model workflow
+- network_analysis/: Cell-contact graphs and connectivity analyses
+- score_comparison/: Comparison of saved model evaluation scores
+- requirements.txt: Python dependencies
+
+## Installation and execution
+
+Install the dependencies with:
+
+```bash
+pip install -r requirements.txt
 ```
 
-## Main directories
+The workflows were developed with Python 3.12, PyTorch 2.4.1, and
+torchvision 0.19.1. GPU acceleration is recommended for training and inference.
+Run numbered notebooks in workflow order within the relevant model directory.
+Update input, checkpoint, and output paths to match your local setup.
 
-### `src/`
+Run score_comparison/00_score_comparison.ipynb from the repository root,
+which contains PS_model/, MS_model/, and DA_model/.
 
-Shared source code used by the segmentation pipelines where applicable.
+## Model performance evaluation
 
-This may include dataset handling, model definitions, metric functions, post-processing utilities, and helper functions.
+The PS, MS, and DA evaluation workflows use the same preprocessing:
 
-### `pipelines/`
+- Label connected non-background prediction regions and assign each region
+  its majority non-background prediction class.
+- Reconstruct the evaluation mask using the original, unexpanded regions.
+  Expanded labels are used only for supplementary visualisation in these
+  prediction notebooks, not for geometric measurements or score calculation.
 
-Command-line scripts for preprocessing, training, and inference.
+Accuracy is calculated over pixels with non-background ground-truth labels.
+Dice and IoU are calculated separately for vessel, fibre, axial parenchyma,
+and ray parenchyma. Background-class scores are omitted, but non-background
+predictions on ground-truth background pixels count as false positives.
+IoU scores are included for exploratory comparison and are not reported
+in the manuscript.
 
-Each pipeline directory contains its own README:
+## Network analysis
 
-- `pipelines/per_species/README.md`
-- `pipelines/mixed_species/README.md`
-- `pipelines/domain_adaptive/README.md`
+The network results reported in the manuscript are based on post-processed
+ground-truth masks. Network-specific label expansion and border handling
+are separate from model performance evaluation. Predicted masks should be
+reviewed and corrected before use in quantitative anatomy or network analysis.
 
-These files explain the expected input structure, command-line arguments, and output locations for each modelling strategy.
+## Data availability and citation
 
-### `notebooks/`
+Public example image and mask data are limited to Allocasuarina.
+The full training dataset and trained model weights are not included.
+See the manuscript for further data availability details.
 
-Jupyter notebooks documenting the original workflow, visualisation steps, evaluation, and network analysis.
-
-The main notebook groups are:
-
-- `notebooks/per_species/`
-- `notebooks/mixed_species/`
-- `notebooks/domain_adaptive/`
-- `notebooks/network_analysis/`
-- `notebooks/evaluation/`
-
-The notebooks are provided for inspection, demonstration, figure generation, and downstream analysis.  
-Where available, the corresponding `pipelines/` scripts provide cleaner command-line implementations.
-
-### `notebooks/network_analysis/`
-
-Network-analysis notebooks for graph-based analysis of xylem cell adjacency.
-
-These notebooks cover:
-
-- visualisation of vessel–parenchyma–ray graphs;
-- vessel–axial parenchyma connectivity;
-- vessel–ray graph distance;
-- vessel-to-vessel shortest-path composition.
-
-Outputs are written to:
-
-```text
-network_analysis_outputs/
-```
-
-### `notebooks/evaluation/`
-
-Evaluation notebooks for comparing segmentation performance across the three modelling strategies.
-
-The main notebook aggregates score CSV files generated by the segmentation pipelines and produces comparison figures and summary tables.
-
-Outputs are written to:
-
-```text
-evaluation_outputs/
-```
-
-## How to reproduce
-
-Detailed instructions are provided in the pipeline-specific README files:
-
-- `pipelines/per_species/README.md`
-- `pipelines/mixed_species/README.md`
-- `pipelines/domain_adaptive/README.md`
-
-In general, each segmentation workflow follows three steps:
-
-```text
-1. preprocessing
-2. training
-3. inference
-```
-
-Evaluation and downstream analysis are then performed using notebooks under:
-
-```text
-notebooks/evaluation/
-notebooks/network_analysis/
-```
-
-## Data and outputs
-
-Large raw microscopy images, generated patches, trained model checkpoints, and full inference outputs are not necessarily tracked in this repository.
-
-The expected input data structure is described in each pipeline-specific README.
-
-Generated outputs may include:
-
-```text
-runs/
-network_analysis_outputs/
-evaluation_outputs/
-```
-
-Large generated files should not be committed to GitHub unless explicitly intended.
-
-## Data availability
-
-The original microscopy images used in the study are "@@@".
-
-- **Data availability status:** "@@@"
-- **Restrictions, if any:** "@@@"
-- **Example data:** The `examples/` directory provides minimal example data or input-format specifications where available.
-
-## Experimental environment
-
-The experiments reported in the paper were conducted using the following environment:
-
-- Python: 3.12
-- PyTorch: 2.4.1
-- torchvision: 0.19.1
-- Operating system: Ubuntu 20.04
-- GPU: NVIDIA RTX A6000, 49 GB VRAM
-- cuDNN: 9.3.0
-
-Exact dependency versions are provided in:
-
-```text
-requirements.txt
-```
-
-## Requirements
-
-Core requirements include:
-
-- Python >= 3.9
-- PyTorch
-- torchvision
-- NumPy
-- pandas
-- scikit-image
-- OpenCV
-- matplotlib
-- seaborn
-- networkx
-- pycocotools
-- albumentations
-
-A CUDA-compatible GPU is recommended for model training.
-
-## License
-
-This repository is released under the "@@@" License.
-
-## Citation
-
-If you use this code, please cite the corresponding paper:
-
-"@@@"
-
-Alternatively, see `CITATION.cff` for citation metadata.
+Please cite the accompanying manuscript when using this code.
