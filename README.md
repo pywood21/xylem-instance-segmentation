@@ -1,110 +1,219 @@
 # Xylem instance segmentation
 
-This repository provides three image-analysis pipelines for instance segmentation of xylem cells across multiple species, together with a unified evaluation framework.
+This repository provides code for instance segmentation of xylem cells across multiple species, together with evaluation and downstream network-analysis notebooks.
+
+The code accompanies the following paper:
+
+- **Title:** "From segmentation to networks: Mask R-CNN and graph analysis uncover vessel–parenchyma organisation in hardwood xylem"
+- **Authors:** "Nodoka Izumi, Ian J. Wright, Shubham Chhajed, Kasia Ziemińska, Junji Sugiyama"
+- **Journal / Preprint:** "@@@"
+- **Year:** "@@@"
+- **DOI / arXiv:** "@@@"
 
 ## Overview
 
-This code accompanies the following paper:
+This repository implements three segmentation workflows described in the paper.
 
-- Title: "@@@"
-- Authors: "@@@"
-- Journal / Preprint: "@@@"
-- Year: "@@@"
-- DOI / arXiv: "@@@"
+### Per-species model
 
-We implement three modelling strategies described in the paper:
+Separate Mask R-CNN models are trained independently for each species using image patches derived only from that species.
 
-1. Per-species model  
-   Independent models trained separately for each species using only image patches derived from that species. This serves as an upper-bound benchmark for within-domain performance, as both training and evaluation data share identical domain characteristics.
+### Mixed-species model
 
-2. Mixed-species model  
-   A single model trained on pooled multi-species data without explicit consideration of domain labels, representing a standard multi-domain baseline.
+A single Mask R-CNN model is trained using pooled image patches from all species, without explicit species or domain labels.
 
-3. Domain-adaptive model  
-   A single model trained on pooled multi-species data using an adversarial domain adaptation framework with a gradient reversal layer to encourage domain-invariant feature learning.
+### Domain-adaptive model
 
-Each pipeline can be executed independently and evaluated using a common scoring framework.
+A single Mask R-CNN model is trained using pooled multi-species data with an adversarial domain-adaptation framework.  
+The model uses a gradient reversal layer and a domain classifier to encourage domain-invariant feature learning.
 
 ## Repository structure
 
-    src/                Shared source code (datasets, models, metrics, post-processing)
-    pipelines/          Executable training and inference pipelines
-      per_species/
-      mixed_species/
-      domain_adaptive/
-    notebooks/          Notebooks for data preparation, visualisation, and figure generation
-    evaluation/         Cross-pipeline evaluation and aggregation
-    examples/           Minimal example data and format specifications
+```text
+xylem-instance-segmentation/
+├─ README.md
+├─ LICENSE
+├─ CITATION.cff
+├─ .gitignore
+├─ requirements.txt or environment.yml
+│
+├─ src/
+│  ├─ per_species/
+│  ├─ mixed_species/
+│  └─ domain_adaptive/
+│
+├─ pipelines/
+│  ├─ per_species/
+│  ├─ mixed_species/
+│  └─ domain_adaptive/
+│
+├─ notebooks/
+│  ├─ model_per_species/
+│  ├─ model_mixed_species/
+│  ├─ model_domain_adaptive/
+│  ├─ network_analysis/
+│  └─ evaluation/
+│
+├─ network_analysis_outputs/
+├─ evaluation_outputs/
+└─ examples/
+```
 
-## Reproducibility
+## Main directories
 
-Training:
+### `src/`
 
-    python pipelines/per_species/train.py --config pipelines/per_species/config.yaml
+Shared source code used by the segmentation pipelines where applicable.
 
-Inference:
+This may include dataset handling, model definitions, metric functions, post-processing utilities, and helper functions.
 
-    python pipelines/per_species/inference.py --config pipelines/per_species/config.yaml
+### `pipelines/`
 
-Cross-pipeline evaluation:
+Command-line scripts for preprocessing, training, and inference.
 
-    python evaluation/score_all.py --runs_dir runs/
+Each pipeline directory contains its own README:
 
-## Output format
+- `pipelines/per_species/README.md`
+- `pipelines/mixed_species/README.md`
+- `pipelines/domain_adaptive/README.md`
 
-All pipelines write results to a common directory structure under runs/:
+These files explain the expected input structure, command-line arguments, and output locations for each modelling strategy.
 
-    runs/
-      per_species/
-        <experiment_id>/
-          ckpt/           Trained model checkpoints
-          preds/          Predicted instance masks
-          scores/         Evaluation outputs (e.g. scores.csv)
+### `notebooks/`
 
-The evaluation scripts assume this structure when aggregating results across pipelines.
+Jupyter notebooks documenting the original workflow, visualisation steps, evaluation, and network analysis.
 
-## Notebooks
+The main notebook groups are:
 
-Jupyter notebooks are provided for demonstration, data inspection, and figure generation.  
-They are not required for reproducing the main results, which can be obtained by running the pipeline scripts directly.
+- `notebooks/per_species/`
+- `notebooks/mixed_species/`
+- `notebooks/domain_adaptive/`
+- `notebooks/network_analysis/`
+- `notebooks/evaluation/`
 
-Notebook directories mirror the pipeline names (e.g. notebooks/per_species/) to indicate correspondence, but notebooks do not constitute the authoritative implementation.
+The notebooks are provided for inspection, demonstration, figure generation, and downstream analysis.  
+Where available, the corresponding `pipelines/` scripts provide cleaner command-line implementations.
+
+### `notebooks/network_analysis/`
+
+Network-analysis notebooks for graph-based analysis of xylem cell adjacency.
+
+These notebooks cover:
+
+- visualisation of vessel–parenchyma–ray graphs;
+- vessel–axial parenchyma connectivity;
+- vessel–ray graph distance;
+- vessel-to-vessel shortest-path composition.
+
+Outputs are written to:
+
+```text
+network_analysis_outputs/
+```
+
+### `notebooks/evaluation/`
+
+Evaluation notebooks for comparing segmentation performance across the three modelling strategies.
+
+The main notebook aggregates score CSV files generated by the segmentation pipelines and produces comparison figures and summary tables.
+
+Outputs are written to:
+
+```text
+evaluation_outputs/
+```
+
+## How to reproduce
+
+Detailed instructions are provided in the pipeline-specific README files:
+
+- `pipelines/per_species/README.md`
+- `pipelines/mixed_species/README.md`
+- `pipelines/domain_adaptive/README.md`
+
+In general, each segmentation workflow follows three steps:
+
+```text
+1. preprocessing
+2. training
+3. inference
+```
+
+Evaluation and downstream analysis are then performed using notebooks under:
+
+```text
+notebooks/evaluation/
+notebooks/network_analysis/
+```
+
+## Data and outputs
+
+Large raw microscopy images, generated patches, trained model checkpoints, and full inference outputs are not necessarily tracked in this repository.
+
+The expected input data structure is described in each pipeline-specific README.
+
+Generated outputs may include:
+
+```text
+runs/
+network_analysis_outputs/
+evaluation_outputs/
+```
+
+Large generated files should not be committed to GitHub unless explicitly intended.
 
 ## Data availability
 
 The original microscopy images used in the study are "@@@".
 
-- Data availability status: "@@@"
-- Restrictions (if any): "@@@"
+- **Data availability status:** "@@@"
+- **Restrictions, if any:** "@@@"
+- **Example data:** The `examples/` directory provides minimal example data or input-format specifications where available.
 
-The examples/ directory provides minimal example data and specifications of expected input and annotation formats to allow code execution and inspection.
+## Experimental environment
+
+The experiments reported in the paper were conducted using the following environment:
+
+- Python: 3.12
+- PyTorch: 2.4.1
+- torchvision: 0.19.1
+- Operating system: Ubuntu 20.04
+- GPU: NVIDIA RTX A6000, 49 GB VRAM
+- cuDNN: 9.3.0
+
+Exact dependency versions are provided in:
+
+```text
+requirements.txt
+```
 
 ## Requirements
 
-- Python >= 3.9
-- PyTorch "@@@"
-- CUDA "@@@" (required / optional)
+Core requirements include:
 
-Exact dependency versions are listed in requirements.txt or environment.yml.
+- Python >= 3.9
+- PyTorch
+- torchvision
+- NumPy
+- pandas
+- scikit-image
+- OpenCV
+- matplotlib
+- seaborn
+- networkx
+- pycocotools
+- albumentations
+
+A CUDA-compatible GPU is recommended for model training.
 
 ## License
 
-This repository is released under the MIT License.
+This repository is released under the "@@@" License.
 
 ## Citation
 
 If you use this code, please cite the corresponding paper:
 
-    "@@@"
+"@@@"
 
-(Alternatively, see CITATION.cff for citation metadata.)
-
-
-
-
-
-
-
-
-
-
+Alternatively, see `CITATION.cff` for citation metadata.
