@@ -1,0 +1,16 @@
+# experiment outputs
+runs/
+
+# python cache
+__pycache__/
+
+# jupyter
+.ipynb_checkpoints/
+
+# model checkpoints
+*.ckpt
+*.pth
+*.pt
+
+# logs
+*.log
